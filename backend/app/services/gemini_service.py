@@ -139,7 +139,8 @@ class GeminiService:
     def _generate_grounded_fallback(cls, text: str, snippet: str, reason: str = "") -> ReportAnalysis:
         """Strictly grounded interpretation extracting only values present in text without hallucinating."""
         lower_text = text.lower()
-        is_blood_test = any(k in lower_text for k in ["hemoglobin", "wbc", "rbc", "platelet", "cbc", "hematocrit"])
+        is_unclear = any(k in lower_text for k in ["torn", "blurry", "unclear", "missing", "cut off", "incomplete", "illegible", "[torn"])
+        is_blood_test = any(k in lower_text for k in ["hemoglobin", "wbc", "rbc", "platelet", "cbc", "hematocrit", "hb:", "hb "])
         is_lipid = any(k in lower_text for k in ["cholesterol", "triglyceride", "hdl", "ldl", "lipid"])
         is_sugar = any(k in lower_text for k in ["glucose", "hba1c", "sugar", "fasting", "diabetic"])
         is_liver = any(k in lower_text for k in ["alt", "ast", "sgpt", "sgot", "bilirubin", "hepatic", "liver"])
@@ -159,7 +160,7 @@ class GeminiService:
             )
             overall_status = "normal"
 
-            hb_val = find_val(r"hemoglobin(?:\s*\(hb\))?[:\s]+([\d\.]+)")
+            hb_val = find_val(r"(?:hemoglobin|hb)(?:\s*\(hb\))?[\s:,]+([\d\.]+)")
             if hb_val:
                 metrics.append(LabMetric(
                     name="Hemoglobin (Hb)",
@@ -329,8 +330,11 @@ class GeminiService:
 
         return ReportAnalysis(
             report_type=report_type,
-            is_report_clear=True,
-            clarity_note=None,
+            is_report_clear=not is_unclear,
+            clarity_note=(
+                "Some information appears missing or unclear in this report due to damage, tears, or illegibility. "
+                "Please consult a qualified clinician for a full review."
+            ) if is_unclear else None,
             summary=summary,
             overall_status=overall_status,
             key_findings=key_findings,
@@ -339,5 +343,130 @@ class GeminiService:
             glossary=glossary,
             extracted_text_snippet=snippet
         )
+
+    @classmethod
+    def answer_report_question(cls, question: str, report_context: dict, history: list = None) -> dict:
+        """
+        Answers a user question strictly using the provided report context.
+        If the question cannot be answered using the report, states information is unavailable
+        and recommends consulting a qualified healthcare professional.
+        """
+        history = history or []
+        metrics_summary = []
+        for m in report_context.get("metrics", []):
+            name = m.get("name", "Unknown")
+            val = m.get("value", "")
+            unit = m.get("unit", "")
+            ref = m.get("standard_range") or m.get("standardRange") or "Not stated"
+            status = m.get("status", "normal")
+            exp = m.get("simple_explanation") or m.get("simpleExplanation", "")
+            fact = m.get("source_extracted_fact") or m.get("sourceExtractedFact", "")
+            metrics_summary.append(
+                f"- {name}: {val} {unit} (Reference Range: {ref}, Status: {status}). Fact: {fact}. Meaning: {exp}"
+            )
+
+        report_context_str = (
+            f"REPORT TITLE: {report_context.get('title', 'Laboratory Report')}\n"
+            f"REPORT TYPE: {report_context.get('report_type', 'General')}\n"
+            f"OVERALL STATUS: {report_context.get('overall_status', 'normal')}\n"
+            f"SUMMARY: {report_context.get('summary', '')}\n"
+            f"KEY FINDINGS:\n" + "\n".join(f"* {k}" for k in report_context.get("key_findings", [])) + "\n"
+            f"EXTRACTED BIOMARKERS & VALUES:\n" + "\n".join(metrics_summary)
+        )
+
+        history_str = ""
+        if history:
+            history_str = "PREVIOUS CONVERSATION TURNS:\n" + "\n".join(
+                f"{h.get('role', 'user').capitalize()}: {h.get('content', '')}" for h in history[-4:]
+            ) + "\n\n"
+
+        prompt = (
+            f"You are ReportSaathi, an empathetic and strictly grounded medical laboratory report educator.\n\n"
+            f"CRITICAL MEDICAL & ETHICAL RULES:\n"
+            f"1. You must answer questions ONLY using the facts, parameters, and reference ranges explicitly present in the provided report context below.\n"
+            f"2. If the user's question asks about something NOT supported or NOT contained in the report (e.g. asking about tests not performed, asking for a diagnosis, asking if they have a disease, asking for drug prescriptions or medical treatments):\n"
+            f"   - You MUST explicitly state that this information is unavailable in this report.\n"
+            f"   - You MUST recommend consulting a qualified healthcare professional or clinician for medical advice.\n"
+            f"3. Do NOT diagnose any condition or disease.\n"
+            f"4. Do NOT prescribe or recommend any medications or treatments.\n"
+            f"5. Output must be valid JSON with keys 'reply' (string) and 'is_supported_by_report' (boolean).\n\n"
+            f"CURRENT REPORT CONTEXT:\n{report_context_str}\n\n"
+            f"{history_str}"
+            f"USER QUESTION: {question}\n\n"
+            f"JSON Response:"
+        )
+
+        if settings.GEMINI_API_KEY and settings.GEMINI_API_KEY.strip():
+            def worker():
+                from google import genai
+                from google.genai import types
+
+                client = genai.Client(api_key=settings.GEMINI_API_KEY)
+                resp = client.models.generate_content(
+                    model=settings.GEMINI_MODEL,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        response_mime_type="application/json",
+                        temperature=0.2,
+                    )
+                )
+                return json.loads(resp.text)
+
+            try:
+                with concurrent.futures.ThreadPoolExecutor(max_workers=1) as executor:
+                    future = executor.submit(worker)
+                    result = future.result(timeout=35.0)
+                    if isinstance(result, dict) and "reply" in result:
+                        return {
+                            "reply": result["reply"],
+                            "is_supported_by_report": bool(result.get("is_supported_by_report", True))
+                        }
+            except Exception as e:
+                print(f"[GeminiService] Chat call error or timeout: {e}")
+
+        # Grounded rule-based fallback
+        q_lower = question.lower()
+        matched_metrics = []
+        for m in report_context.get("metrics", []):
+            name_lower = m.get("name", "").lower()
+            if any(part in q_lower for part in name_lower.split() if len(part) > 3):
+                matched_metrics.append(m)
+
+        if matched_metrics:
+            m = matched_metrics[0]
+            val = m.get("value")
+            unit = m.get("unit", "")
+            name = m.get("name")
+            ref = m.get("standard_range") or m.get("standardRange") or "not explicitly stated"
+            exp = m.get("simple_explanation") or m.get("simpleExplanation", "")
+            return {
+                "reply": (
+                    f"According to your {report_context.get('title', 'report')}, your {name} is {val} {unit}. "
+                    f"The reference range in the report is {ref}. {exp} "
+                    f"Please discuss what this specific measurement means for your overall health with your doctor."
+                ),
+                "is_supported_by_report": True
+            }
+
+        # Check for diagnosis or treatment queries
+        if any(term in q_lower for term in ["cure", "medicine", "pill", "drug", "treatment", "prescribe", "dose", "cancer", "disease", "do i have"]):
+            return {
+                "reply": (
+                    "This information is not available in your laboratory report. ReportSaathi is an educational tool and "
+                    "cannot diagnose medical conditions or recommend treatments or medications. "
+                    "Please consult a qualified healthcare professional for clinical advice tailored to your health."
+                ),
+                "is_supported_by_report": False
+            }
+
+        # General unsupported question fallback
+        return {
+            "reply": (
+                "This specific information is not available in your currently selected report. "
+                "Because laboratory values can only be properly interpreted alongside your personal medical history, "
+                "we recommend discussing this question directly with your healthcare provider or physician."
+            ),
+            "is_supported_by_report": False
+        }
 
 gemini_service = GeminiService()

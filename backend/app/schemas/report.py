@@ -63,3 +63,21 @@ class AnalyzeReportResponse(BaseModel):
     character_count: int
     extracted_text: str
     analysis: ReportAnalysis
+
+class SaveReportRequest(BaseModel):
+    user_id: str = Field(..., description="Authenticated user UUID")
+    title: str = Field(..., description="Readable title e.g. Complete Blood Count (CBC)")
+    report_data: dict = Field(..., description="Structured report analysis object without raw files")
+
+class SavedReportItem(BaseModel):
+    id: str
+    user_id: str
+    title: str
+    report_type: str
+    overall_status: str
+    summary: str
+    key_findings: List[str] = []
+    metrics: List[dict] = []
+    questions_for_doctor: List[str] = []
+    glossary: List[dict] = []
+    created_at: str

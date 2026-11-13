@@ -1,6 +1,6 @@
 import React from 'react';
 import { SAMPLE_REPORTS } from '../../data/sampleReports';
-import { FileCheck2, ArrowRight, Activity, ShieldCheck } from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
 
 export default function SampleLibrary({ onSelectSample }) {
   return (

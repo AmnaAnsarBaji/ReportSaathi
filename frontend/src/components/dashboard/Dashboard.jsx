@@ -1,8 +1,7 @@
-import React, { useState } from 'react';
+import React from 'react';
 import UploadZone from '../upload/UploadZone';
 import LoadingState from '../states/LoadingState';
 import ErrorState from '../states/ErrorState';
-import EmptyState from '../states/EmptyState';
 import ReportResults from '../report/ReportResults';
 import { api } from '../../services/api';
 import { SAMPLE_REPORTS } from '../../data/sampleReports';
@@ -15,7 +14,9 @@ export default function Dashboard({
   error,
   setError,
   showUploaderOnly,
-  setShowUploaderOnly
+  setShowUploaderOnly,
+  user = null,
+  onOpenAuth = () => {},
 }) {
   const handleProcessFile = async (file) => {
     setError(null);
@@ -35,14 +36,18 @@ export default function Dashboard({
         patientContext: analysis.patient_context_note || `${(data.extraction_method || 'Extracted').toUpperCase()} • ${data.filename || file.name}`,
         summary: analysis.summary,
         keyFindings: analysis.key_findings || [],
+        isReportClear: analysis.is_report_clear !== false && analysis.isReportClear !== false,
+        clarityNote: analysis.clarity_note || analysis.clarityNote || null,
         metrics: (analysis.metrics || []).map((m) => ({
           name: m.name,
           value: m.value,
           unit: m.unit || '',
-          standardRange: m.standard_range || 'Not specified in report',
+          standardRange: m.standard_range || m.standardRange || null,
           status: m.status || 'normal',
-          category: 'Biomarker',
-          simpleExplanation: m.simple_explanation,
+          category: m.category || 'Biomarker',
+          simpleExplanation: m.simple_explanation || m.simpleExplanation,
+          sourceExtractedFact: m.source_extracted_fact || m.sourceExtractedFact || `${m.name}: ${m.value} ${m.unit || ''}`.trim(),
+          note: m.note || null,
         })),
         questionsForDoctor: analysis.questions_for_doctor || [],
         glossary: (analysis.glossary || []).map((g) => ({
@@ -97,14 +102,18 @@ export default function Dashboard({
         patientContext: analysis.patient_context_note || 'Reference Clinical Sample',
         summary: analysis.summary,
         keyFindings: analysis.key_findings || [],
+        isReportClear: analysis.is_report_clear !== false && analysis.isReportClear !== false,
+        clarityNote: analysis.clarity_note || analysis.clarityNote || null,
         metrics: (analysis.metrics || []).map((m) => ({
           name: m.name,
           value: m.value,
           unit: m.unit || '',
-          standardRange: m.standard_range || 'Not specified in report',
+          standardRange: m.standard_range || m.standardRange || null,
           status: m.status || 'normal',
-          category: 'Biomarker',
-          simpleExplanation: m.simple_explanation,
+          category: m.category || 'Biomarker',
+          simpleExplanation: m.simple_explanation || m.simpleExplanation,
+          sourceExtractedFact: m.source_extracted_fact || m.sourceExtractedFact || `${m.name}: ${m.value} ${m.unit || ''}`.trim(),
+          note: m.note || null,
         })),
         questionsForDoctor: analysis.questions_for_doctor || [],
         glossary: (analysis.glossary || []).map((g) => ({
@@ -118,6 +127,7 @@ export default function Dashboard({
       setActiveReport(formattedReport);
       setShowUploaderOnly(false);
     } catch (err) {
+      console.warn('Backend sample fetch error, loading local sample fallback:', err);
       // Fallback to offline sample report if backend is restarting
       const localSample = SAMPLE_REPORTS.find((s) => s.id === sampleId) || SAMPLE_REPORTS[0];
       setActiveReport(localSample);
@@ -156,6 +166,12 @@ export default function Dashboard({
         report={activeReport}
         onReset={handleReset}
         onSelectSample={handleSelectSample}
+        user={user}
+        onOpenAuth={onOpenAuth}
+        onReportDeleted={() => {
+          // If viewing a report that was deleted, reset view
+          handleReset();
+        }}
       />
     );
   }

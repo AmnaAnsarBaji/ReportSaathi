@@ -14,13 +14,40 @@ import {
   FileText,
   Activity,
   ShieldAlert,
+  Quote,
+  Info,
+  Bookmark,
+  BookmarkCheck,
+  Trash2,
+  Database,
 } from 'lucide-react';
+import {
+  isSupabaseConfigured,
+  saveReportToHistory,
+  deleteReportFromHistory,
+} from '../../services/supabase';
+import ReportChat from '../chat/ReportChat';
 
-export default function ReportResults({ report, onReset }) {
+export default function ReportResults({
+  report,
+  onReset,
+  user = null,
+  onOpenAuth = () => {},
+  onReportDeleted = () => {},
+}) {
   const [metricFilter, setMetricFilter] = useState('all');
   const [copied, setCopied] = useState(false);
   const [showRawText, setShowRawText] = useState(false);
   const [glossarySearch, setGlossarySearch] = useState('');
+
+  // Persistence States
+  const [isSaved, setIsSaved] = useState(Boolean(report?.isSavedRecord));
+  const [savedId, setSavedId] = useState(report?.savedRecordId || null);
+  const [isSaving, setIsSaving] = useState(false);
+  const [isDeleting, setIsDeleting] = useState(false);
+  const [saveMessage, setSaveMessage] = useState(null);
+  const [saveError, setSaveError] = useState(null);
+  const [confirmDelete, setConfirmDelete] = useState(false);
 
   if (!report) return null;
 
@@ -29,6 +56,59 @@ export default function ReportResults({ report, onReset }) {
     if (metricFilter === 'normal') return m.status === 'normal';
     return true;
   });
+
+  const handleSave = async () => {
+    setSaveError(null);
+    setSaveMessage(null);
+
+    if (!isSupabaseConfigured) {
+      setSaveError(
+        'Demo Mode: Supabase credentials are not configured in frontend/.env. Saving to cloud database is disabled.'
+      );
+      return;
+    }
+
+    if (!user) {
+      onOpenAuth();
+      return;
+    }
+
+    setIsSaving(true);
+    try {
+      const res = await saveReportToHistory(user, report);
+      if (res.success && res.data) {
+        setIsSaved(true);
+        setSavedId(res.data.id);
+        setSaveMessage('Report analysis successfully saved to your private history.');
+      } else if (res.demoMode) {
+        setSaveError(res.message);
+      }
+    } catch (err) {
+      console.error('Save error:', err);
+      setSaveError(err.message || 'Could not save report to database.');
+    } finally {
+      setIsSaving(false);
+    }
+  };
+
+  const handleDelete = async () => {
+    if (!savedId || !user) return;
+    setIsDeleting(true);
+    setSaveError(null);
+    try {
+      await deleteReportFromHistory(savedId, user.id);
+      setIsSaved(false);
+      setSavedId(null);
+      setConfirmDelete(false);
+      setSaveMessage('Report removed from your saved history.');
+      onReportDeleted(savedId);
+    } catch (err) {
+      console.error('Delete error:', err);
+      setSaveError(err.message || 'Could not delete report from history.');
+    } finally {
+      setIsDeleting(false);
+    }
+  };
 
   const getTriageInfo = (status) => {
     switch (status) {
@@ -135,6 +215,60 @@ export default function ReportResults({ report, onReset }) {
         </div>
 
         <div className="flex items-center gap-2">
+          {/* Opt-in Save / Delete button */}
+          {isSaved ? (
+            confirmDelete ? (
+              <div className="flex items-center gap-1.5 bg-rose-50 p-1 rounded-full border border-rose-200">
+                <button
+                  onClick={handleDelete}
+                  disabled={isDeleting}
+                  className="px-3 py-1 bg-rose-600 hover:bg-rose-700 text-white rounded-full text-xs font-bold transition disabled:opacity-50"
+                >
+                  {isDeleting ? 'Deleting...' : 'Confirm Delete'}
+                </button>
+                <button
+                  onClick={() => setConfirmDelete(false)}
+                  className="px-2 py-1 text-slate-600 hover:text-slate-800 text-xs font-semibold"
+                >
+                  Cancel
+                </button>
+              </div>
+            ) : (
+              <div className="flex items-center gap-1.5">
+                <span className="inline-flex items-center gap-1 px-3 py-1.5 rounded-full text-xs font-semibold bg-emerald-50 text-emerald-800 border border-emerald-200">
+                  <BookmarkCheck className="w-3.5 h-3.5 text-emerald-600" />
+                  <span>Saved in History</span>
+                </span>
+                <button
+                  onClick={() => setConfirmDelete(true)}
+                  className="p-1.5 rounded-full text-slate-400 hover:text-rose-600 hover:bg-rose-50 transition"
+                  title="Delete from saved history"
+                >
+                  <Trash2 className="w-3.5 h-3.5" />
+                </button>
+              </div>
+            )
+          ) : (
+            <button
+              onClick={handleSave}
+              disabled={isSaving}
+              className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-bold text-[#146578] bg-[#def1f5] hover:bg-[#c9e8f0] border border-[#8ecfde] rounded-full transition shadow-2xs disabled:opacity-50"
+              title="Save structured educational analysis to your private account"
+            >
+              {isSaving ? (
+                <>
+                  <span className="w-3 h-3 border-2 border-[#189ab4]/30 border-t-[#189ab4] rounded-full animate-spin"></span>
+                  <span>Saving...</span>
+                </>
+              ) : (
+                <>
+                  <Bookmark className="w-3.5 h-3.5 text-[#189ab4]" />
+                  <span>Save to History</span>
+                </>
+              )}
+            </button>
+          )}
+
           <button
             onClick={() => window.print()}
             className="inline-flex items-center gap-1.5 px-4 py-2 text-xs font-semibold text-[#175362] bg-[#def1f5]/60 hover:bg-[#def1f5] border border-[#bee3ec] rounded-full transition"
@@ -154,6 +288,36 @@ export default function ReportResults({ report, onReset }) {
         </div>
       </div>
 
+      {/* Save Success / Error Messages */}
+      {saveMessage && (
+        <div className="p-3.5 rounded-2xl bg-emerald-50 border border-emerald-200 text-emerald-900 text-xs flex items-center justify-between no-print">
+          <div className="flex items-center gap-2">
+            <BookmarkCheck className="w-4 h-4 text-emerald-600" />
+            <span>{saveMessage}</span>
+          </div>
+          <button
+            onClick={() => setSaveMessage(null)}
+            className="text-xs font-semibold text-emerald-700 hover:text-emerald-900"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+      {saveError && (
+        <div className="p-3.5 rounded-2xl bg-amber-50 border border-amber-200 text-amber-900 text-xs flex items-start justify-between no-print">
+          <div className="flex items-start gap-2">
+            <Database className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+            <span>{saveError}</span>
+          </div>
+          <button
+            onClick={() => setSaveError(null)}
+            className="text-xs font-semibold text-amber-700 hover:text-amber-900 ml-2"
+          >
+            Dismiss
+          </button>
+        </div>
+      )}
+
       {/* Prominent Educational Notice */}
       <div className="p-4 rounded-2xl bg-amber-50/90 border border-amber-200 text-amber-950 flex items-start gap-3 text-xs sm:text-sm">
         <ShieldAlert className="w-5 h-5 text-amber-700 shrink-0 mt-0.5" />
@@ -161,6 +325,19 @@ export default function ReportResults({ report, onReset }) {
           <strong className="font-semibold text-amber-900">Health Literacy Disclaimer:</strong> This explanation is created for educational clarity to help you understand your laboratory printout. It does not replace a clinical consultation or physician diagnosis.
         </p>
       </div>
+
+      {/* Report Clarity Warning — shown when is_report_clear is false */}
+      {report.isReportClear === false && (
+        <div className="p-4 rounded-2xl bg-orange-50 border-2 border-orange-300 text-orange-950 flex items-start gap-3">
+          <AlertTriangle className="w-6 h-6 text-orange-600 shrink-0 mt-0.5" />
+          <div>
+            <p className="font-bold text-orange-900 text-sm mb-1">⚠ This report appears incomplete or unclear</p>
+            <p className="text-xs leading-relaxed text-orange-800">
+              {report.clarityNote || 'Some parts of this document could not be read clearly. The extracted information may be incomplete. Please consult a qualified clinician before acting on any values shown here.'}
+            </p>
+          </div>
+        </div>
+      )}
 
       {/* Overall Health Status & Empathetic Summary Card */}
       <div className="bg-white rounded-[32px] border border-[#def1f5] p-6 sm:p-8 shadow-sm print-card">
@@ -313,6 +490,29 @@ export default function ReportResults({ report, onReset }) {
                 </div>
               )}
 
+              {/* Source Extracted Fact — verbatim from report, clearly separated from AI explanation */}
+              {metric.sourceExtractedFact && (
+                <div className="flex items-start gap-2 mb-2.5 px-3.5 py-2.5 bg-[#edf7fa] border-l-4 border-[#189ab4] rounded-r-xl">
+                  <Quote className="w-3.5 h-3.5 text-[#189ab4] shrink-0 mt-0.5" />
+                  <div>
+                    <span className="text-[10px] font-bold uppercase tracking-wide text-[#189ab4] block mb-0.5">
+                      Source Fact (verbatim from report)
+                    </span>
+                    <span className="text-xs font-mono text-[#184653] leading-relaxed">
+                      {metric.sourceExtractedFact}
+                    </span>
+                  </div>
+                </div>
+              )}
+
+              {/* Note — missing info or unclear reference range */}
+              {metric.note && (
+                <div className="flex items-start gap-2 mb-2.5 px-3 py-2 bg-amber-50 border border-amber-200 rounded-xl">
+                  <Info className="w-3.5 h-3.5 text-amber-600 shrink-0 mt-0.5" />
+                  <span className="text-xs text-amber-800 leading-relaxed">{metric.note}</span>
+                </div>
+              )}
+
               <div className="bg-white p-3.5 rounded-xl border border-[#def1f5]/80 text-xs sm:text-sm text-[#42717f] leading-relaxed">
                 <strong className="font-semibold text-[#175362]">What it means: </strong>
                 {metric.simpleExplanation}
@@ -321,6 +521,9 @@ export default function ReportResults({ report, onReset }) {
           ))}
         </div>
       </div>
+
+      {/* Interactive Report-Grounded Chat Assistant */}
+      <ReportChat report={report} />
 
       {/* Questions to Ask Your Doctor */}
       {report.questionsForDoctor && report.questionsForDoctor.length > 0 && (
@@ -423,7 +626,7 @@ export default function ReportResults({ report, onReset }) {
           >
             <span className="flex items-center gap-2">
               <FileText className="w-3.5 h-3.5 text-[#189ab4]" />
-              <span>Simulated Raw Extraction View (Transparency Preview)</span>
+              <span>Raw Extracted Text (Transparency View)</span>
             </span>
             {showRawText ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
           </button>

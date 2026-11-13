@@ -1,5 +1,5 @@
 import React from 'react';
-import { FileUp, Sparkles, FileText, ArrowRight } from 'lucide-react';
+import { FileUp, ArrowRight } from 'lucide-react';
 import { SAMPLE_REPORTS } from '../../data/sampleReports';
 
 export default function EmptyState({ onUploadClick, onSelectSample }) {

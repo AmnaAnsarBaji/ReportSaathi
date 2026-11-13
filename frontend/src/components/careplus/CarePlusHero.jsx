@@ -1,6 +1,6 @@
 import React, { useState } from 'react';
 import { DoctorConsultationArt } from './MedicalIllustrations';
-import { Sparkles, Calendar, ChevronDown, FileText, ArrowRight } from 'lucide-react';
+import { Sparkles, ChevronDown, FileText, ArrowRight } from 'lucide-react';
 
 export default function CarePlusHero({ onSelectSample, onUploadClick }) {
   const [selectedDept, setSelectedDept] = useState('cbc-routine');

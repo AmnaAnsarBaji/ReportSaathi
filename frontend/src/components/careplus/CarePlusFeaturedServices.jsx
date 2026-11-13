@@ -1,6 +1,6 @@
 import React from 'react';
 import { CTScannerArt, ModernSuiteArt, ConsultationDeskArt } from './MedicalIllustrations';
-import { ArrowRight, CheckCircle2 } from 'lucide-react';
+import { ArrowRight } from 'lucide-react';
 
 export default function CarePlusFeaturedServices({ onStartUpload, onSelectSample }) {
   const services = [

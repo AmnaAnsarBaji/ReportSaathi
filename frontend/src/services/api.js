@@ -31,4 +31,13 @@ export const api = {
     const res = await client.get(`/reports/sample?report_type=${encodeURIComponent(type)}`);
     return res.data;
   },
+
+  async askReportQuestion(message, reportContext, history = []) {
+    const res = await client.post('/chat/ask', {
+      message,
+      report_context: reportContext,
+      history,
+    });
+    return res.data;
+  },
 };

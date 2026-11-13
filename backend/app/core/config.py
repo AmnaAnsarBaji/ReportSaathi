@@ -1,5 +1,6 @@
 import os
-from typing import List
+import json
+from typing import List, Union
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 class Settings(BaseSettings):
@@ -19,19 +20,34 @@ class Settings(BaseSettings):
     # Supabase (Optional)
     SUPABASE_URL: str = os.getenv("SUPABASE_URL", "")
     SUPABASE_KEY: str = os.getenv("SUPABASE_KEY", "")
+
+    # Telegram Bot (Optional)
+    TELEGRAM_BOT_TOKEN: str = os.getenv("TELEGRAM_BOT_TOKEN", "")
     
     # Storage & Limits
     UPLOAD_DIR: str = os.getenv("UPLOAD_DIR", "uploads")
     MAX_FILE_SIZE_MB: int = 15
     
-    # CORS
-    ALLOWED_ORIGINS: List[str] = [
+    # CORS Configuration
+    ALLOWED_ORIGINS: Union[str, List[str]] = [
         "http://localhost:5173",
         "http://127.0.0.1:5173",
         "http://localhost:3000",
         "http://localhost:8080",
         "*"
     ]
+
+    @property
+    def cors_origins(self) -> List[str]:
+        if isinstance(self.ALLOWED_ORIGINS, str):
+            val = self.ALLOWED_ORIGINS.strip()
+            if val.startswith("[") and val.endswith("]"):
+                try:
+                    return json.loads(val)
+                except Exception:
+                    pass
+            return [o.strip() for o in val.split(",") if o.strip()]
+        return self.ALLOWED_ORIGINS
 
     model_config = SettingsConfigDict(
         env_file=".env",

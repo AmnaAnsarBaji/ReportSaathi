@@ -1,5 +1,5 @@
 import React from 'react';
-import { Activity, UploadCloud, BookOpen, Sparkles, Home, FileText } from 'lucide-react';
+import { Activity, UploadCloud, BookOpen, Home } from 'lucide-react';
 
 export default function Navbar({ currentView, setCurrentView, onUploadClick, onResetToHome }) {
   return (

@@ -13,7 +13,7 @@ def health_check():
         "status": "healthy",
         "app_name": settings.PROJECT_NAME,
         "version": settings.VERSION,
-        "timestamp": datetime.datetime.utcnow().isoformat() + "Z",
+        "timestamp": datetime.datetime.now(datetime.timezone.utc).isoformat(),
         "services": {
             "ocr_tesseract": {
                 "available": ocr_service.is_available(),

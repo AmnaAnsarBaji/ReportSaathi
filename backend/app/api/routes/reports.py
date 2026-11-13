@@ -3,7 +3,7 @@ import tempfile
 from typing import Optional
 from fastapi import APIRouter, UploadFile, File, Form, HTTPException, status
 from app.core.config import settings
-from app.schemas.report import ReportAnalysis, AnalyzeReportResponse
+from app.schemas.report import ReportAnalysis, AnalyzeReportResponse, SaveReportRequest, SavedReportItem
 from app.services.ocr_service import ocr_service
 from app.services.pdf_service import pdf_service
 from app.services.gemini_service import gemini_service
@@ -46,7 +46,7 @@ async def analyze_report(
     if len(file_bytes) > max_bytes:
         size_mb = len(file_bytes) / (1024 * 1024)
         raise HTTPException(
-            status_code=status.HTTP_413_REQUEST_ENTITY_TOO_LARGE,
+            status_code=getattr(status, "HTTP_413_CONTENT_TOO_LARGE", 413),
             detail=f"File size ({size_mb:.1f} MB) exceeds maximum permitted limit of {settings.MAX_FILE_SIZE_MB} MB."
         )
 
@@ -86,7 +86,7 @@ async def analyze_report(
     cleaned_check = "".join(ch for ch in extracted_text if ch.isalnum())
     if len(cleaned_check) < 15:
         raise HTTPException(
-            status_code=status.HTTP_422_UNPROCESSABLE_ENTITY,
+            status_code=getattr(status, "HTTP_422_UNPROCESSABLE_CONTENT", 422),
             detail=(
                 "Could not extract readable text from this document. "
                 "The image may be blank, out of focus, or heavily shadowed. "
@@ -97,12 +97,8 @@ async def analyze_report(
     # 5. Grounded analysis via Gemini
     analysis = gemini_service.analyze_report(extracted_text)
 
-    # 6. Optional persistence if configured
-    if user_id and supabase_service.is_configured():
-        try:
-            await supabase_service.save_report(user_id, filename, analysis.model_dump())
-        except Exception:
-            pass
+    # Note: Privacy-first design: Uploaded files and raw medical text are NEVER
+    # saved automatically to any database. Users choose explicitly whether to save.
 
     return AnalyzeReportResponse(
         status="success",
@@ -150,3 +146,101 @@ async def get_sample_report(report_type: str = "cbc"):
         extracted_text=sample_text,
         analysis=analysis
     )
+
+@router.post("/save")
+async def save_report(payload: SaveReportRequest):
+    """
+    Opt-in save endpoint for authenticated users.
+    PRIVACY RULES:
+    - Never stores raw file bytes or raw medical text.
+    - Stores only the structured educational analysis and findings.
+    - If Supabase is unconfigured, returns 503 so the app cleanly falls back to Demo Mode.
+    """
+    if not supabase_service.is_configured():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Supabase credentials are not configured. ReportSaathi is running in local Demo Mode."
+        )
+
+    try:
+        saved_record = await supabase_service.save_report(
+            user_id=payload.user_id,
+            title=payload.title,
+            report_data=payload.report_data
+        )
+        if not saved_record:
+            raise HTTPException(
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+                detail="Failed to save report record in database."
+            )
+        return {
+            "status": "success",
+            "message": "Report analysis saved to your private history.",
+            "record": saved_record
+        }
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Database error while saving report: {str(e)}"
+        )
+
+@router.get("/history")
+async def get_report_history(user_id: str):
+    """
+    Retrieves saved educational report summaries for the specified authenticated user.
+    """
+    if not supabase_service.is_configured():
+        return {
+            "configured": False,
+            "demo_mode": True,
+            "reports": [],
+            "message": "Supabase credentials are not configured. Running in Demo Mode without cloud persistence."
+        }
+
+    try:
+        reports = await supabase_service.get_user_reports(user_id)
+        return {
+            "configured": True,
+            "demo_mode": False,
+            "reports": reports
+        }
+    except Exception as e:
+        # Degrade gracefully for any DB error (network, UUID validation, RLS, etc.)
+        # Never return 500 for history — an empty list is always a safe response.
+        error_msg = str(e)
+        print(f"[history] Non-fatal error fetching reports for user={user_id}: {error_msg}")
+        return {
+            "configured": True,
+            "demo_mode": False,
+            "reports": [],
+            "error": "Could not retrieve history at this time. Please try again shortly."
+        }
+
+@router.delete("/history/{report_id}")
+async def delete_saved_report(report_id: str, user_id: str):
+    """
+    Permanently deletes a saved report record from the user's history.
+    """
+    if not supabase_service.is_configured():
+        raise HTTPException(
+            status_code=status.HTTP_503_SERVICE_UNAVAILABLE,
+            detail="Supabase credentials are not configured."
+        )
+
+    try:
+        success = await supabase_service.delete_report(user_id=user_id, report_id=report_id)
+        if not success:
+            raise HTTPException(
+                status_code=status.HTTP_404_NOT_FOUND,
+                detail="Report not found or not authorized to delete."
+            )
+        return {"status": "success", "message": "Report deleted permanently."}
+    except HTTPException:
+        raise
+    except Exception as e:
+        raise HTTPException(
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Error deleting report: {str(e)}"
+        )

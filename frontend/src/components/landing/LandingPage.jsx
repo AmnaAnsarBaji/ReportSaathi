@@ -2,14 +2,11 @@ import React from 'react';
 import {
   UploadCloud,
   FileCheck2,
-  Stethoscope,
   ShieldCheck,
   Sparkles,
   ArrowRight,
-  BookOpen,
   Heart,
   CheckCircle2,
-  AlertCircle
 } from 'lucide-react';
 import { SAMPLE_REPORTS } from '../../data/sampleReports';
 
